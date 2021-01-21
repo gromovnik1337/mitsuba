@@ -24,11 +24,9 @@ elif [ "$ZSH_VERSION" ]; then
 	export MITSUBA_DIR=$(dirname "$0:A")
 fi
 
-if [ "$MITSUBA_PYVER" ]; then
-	pyver=$MITSUBA_PYVER
-else
-	pyver=`python --version 2>&1 | grep -oE '([[:digit:]].[[:digit:]])' | head -n1`
-fi
+
+pyver=3.8
+
 
 if [[ "$(uname)" == 'Darwin' ]]; then
 	export PYTHONPATH="$MITSUBA_DIR/Mitsuba.app/python/$pyver:$PYTHONPATH"
