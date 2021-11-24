@@ -27,6 +27,9 @@ build/.vs/**/*
 data/windows/mitsuba_res.res
 dist
 
+cmake-build*
+.idea/
+
 # Debugging history files
 \.gdb_history
 

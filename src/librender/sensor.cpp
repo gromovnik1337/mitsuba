@@ -29,6 +29,7 @@ Sensor::Sensor(const Properties &props)
     m_shutterOpen = props.getFloat("shutterOpen", 0.0f);
     Float shutterClose = props.getFloat("shutterClose", 0.0f);
     m_shutterOpenTime = shutterClose - m_shutterOpen;
+    m_pixelAspect = props.getFloat("pixelAspect", 1.0f);
 
     if (m_shutterOpenTime < 0)
         Log(EError, "Shutter opening time must be less than "
@@ -36,6 +37,11 @@ Sensor::Sensor(const Properties &props)
 
     if (m_shutterOpenTime == 0)
         m_type |= EDeltaTime;
+
+    if (m_pixelAspect <= 0)
+        Log(EError, "Non-square pixel dimensions aspect ratio (w/h) "
+                    "must be greater than zero (default = 1.0f)!");
+
 }
 
 Sensor::Sensor(Stream *stream, InstanceManager *manager)
@@ -44,6 +50,7 @@ Sensor::Sensor(Stream *stream, InstanceManager *manager)
     m_sampler = static_cast<Sampler *>(manager->getInstance(stream));
     m_shutterOpen = stream->readFloat();
     m_shutterOpenTime = stream->readFloat();
+    m_pixelAspect = stream->readFloat();
 }
 
 Sensor::~Sensor() {
@@ -55,6 +62,7 @@ void Sensor::serialize(Stream *stream, InstanceManager *manager) const {
     manager->serialize(stream, m_sampler.get());
     stream->writeFloat(m_shutterOpen);
     stream->writeFloat(m_shutterOpenTime);
+    stream->writeFloat(m_pixelAspect);
 }
 
 void Sensor::setShutterOpenTime(Float time) {
@@ -98,8 +106,9 @@ void Sensor::configure() {
         m_sampler->configure();
     }
 
-    m_aspect = m_film->getSize().x /
-       (Float) m_film->getSize().y;
+    m_aspect = m_film->getSize().x / (Float) m_film->getSize().y;
+    /* Account for non-square pixel dimensions (when m_pixelAspect != 1.0f): */
+    m_aspect = m_aspect * m_pixelAspect;
 
     m_resolution = Vector2(m_film->getCropSize());
     m_invResolution = Vector2(

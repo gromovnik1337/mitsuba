@@ -573,6 +573,7 @@ public:
         std::ostringstream oss;
         oss << "ThinLens[" << endl
             << "  fov = [" << getXFov() << ", " << getYFov() << "]," << endl
+            << "  pixelAspect = " << m_pixelAspect << "," << endl
             << "  apertureRadius = " << m_apertureRadius << "," << endl
             << "  focusDistance = " << m_focusDistance << "," << endl
             << "  nearClip = " << m_nearClip << "," << endl

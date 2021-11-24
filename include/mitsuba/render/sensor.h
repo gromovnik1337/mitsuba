@@ -371,6 +371,7 @@ protected:
     Vector2 m_invResolution;
     Float m_shutterOpen;
     Float m_shutterOpenTime;
+    Float m_pixelAspect;
     Float m_aspect;
 };
 
