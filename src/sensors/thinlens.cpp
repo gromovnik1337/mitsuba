@@ -19,6 +19,7 @@
 #include <mitsuba/render/sensor.h>
 #include <mitsuba/render/medium.h>
 #include <mitsuba/core/track.h>
+#include <mitsuba/core/random.h>
 #include <mitsuba/render/shape.h>
 #include <mitsuba/core/frame.h>
 #include <mitsuba/core/plugin.h>
@@ -119,6 +120,9 @@ MTS_NAMESPACE_BEGIN
  * </sensor>
  * \end{xml}
  */
+
+ref<Random> g_random;
+
 class ThinLens : public PerspectiveCamera {
 public:
     ThinLens(const Properties &props)
@@ -137,6 +141,14 @@ public:
             m_apertureRadius = Epsilon;
         }
 
+        /* Diffraction limit on resolution */
+        m_diffLimit = props.getFloat("diffLimit", 0.0f);
+        m_random = new Random();  // Requires extra (third) sample
+
+        if (m_diffLimit < 0)
+            Log(EError, "Diffraction limit on resolution (in degrees) "
+                        "cannot be negative!");
+
         if (props.getAnimatedTransform("toWorld", Transform())->eval(0).hasScale())
             Log(EError, "Scale factors in the camera-to-world "
                 "transformation are not allowed!");
@@ -145,16 +157,23 @@ public:
     ThinLens(Stream *stream, InstanceManager *manager)
             : PerspectiveCamera(stream, manager) {
         m_apertureRadius = stream->readFloat();
+        m_diffLimit = stream->readFloat();
+        m_random = static_cast<Random *>(manager->getInstance(stream));
         configure();
     }
 
     void serialize(Stream *stream, InstanceManager *manager) const {
         PerspectiveCamera::serialize(stream, manager);
         stream->writeFloat(m_apertureRadius);
+        stream->writeFloat(m_diffLimit);
+        manager->serialize(stream, m_random.get());
     }
 
     void configure() {
         PerspectiveCamera::configure();
+
+        /* Use global copy of m_random to bypass const modifier of sampleRayDifferential() function */
+        g_random = new Random(m_random);
 
         const Vector2i &filmSize   = m_film->getSize();
         const Vector2i &cropSize   = m_film->getCropSize();
@@ -327,11 +346,21 @@ public:
             * m_apertureRadius;
         ray.time = sampleTime(timeSample);
 
+//        Log(EWarn, "Here");
+
+        /* Simulate diffraction limit on resolution */
+        Point2 diffSample(g_random->nextFloat(), g_random->nextFloat());
+        /* Convert diffraction limit from radians to pixels */
+        Float diffPixels_y = 0.5f * m_resolution.y * tan(degToRad(m_diffLimit)) / tan(degToRad(getYFov()) / 2);
+        Point2 diff = warp::squareToUniformDiskConcentric(diffSample) * diffPixels_y;
+        diff.x /= m_pixelAspect;  // Account for non-square pixels (diffraction is constant in angle terms)
+//         Log(EWarn, "Diff (%f, %f)", diff.x, diff.y);
+
         /* Compute the corresponding position on the
            near plane (in local camera space) */
         Point nearP = m_sampleToCamera(Point(
-            pixelSample.x * m_invResolution.x,
-            pixelSample.y * m_invResolution.y, 0.0f));
+                (pixelSample.x + diff.x) * m_invResolution.x,
+                (pixelSample.y + diff.y) * m_invResolution.y, 0.0f));
 
         /* Aperture position */
         Point apertureP(tmp.x, tmp.y, 0.0f);
@@ -545,6 +574,8 @@ public:
         Point intersection = localP + localD * (m_focusDistance / localD.z);
 
         Point screenSample = m_cameraToSample(intersection);
+
+        /* Check sensor bounds */
         if (screenSample.x < 0 || screenSample.x > 1 ||
             screenSample.y < 0 || screenSample.y > 1)
             return false;
@@ -574,6 +605,7 @@ public:
         oss << "ThinLens[" << endl
             << "  fov = [" << getXFov() << ", " << getYFov() << "]," << endl
             << "  pixelAspect = " << m_pixelAspect << "," << endl
+            << "  diffLimit = " << m_diffLimit << "," << endl
             << "  apertureRadius = " << m_apertureRadius << "," << endl
             << "  focusDistance = " << m_focusDistance << "," << endl
             << "  nearClip = " << m_nearClip << "," << endl
@@ -597,6 +629,8 @@ private:
     Float m_apertureRadius;
     Float m_aperturePdf;
     Float m_normalization;
+    Float m_diffLimit;
+    ref<Random> m_random;
     Vector m_dx, m_dy;
 };
 

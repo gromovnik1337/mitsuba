@@ -7,5 +7,5 @@ file(GLOB_RECURSE HDRS *.h)
 include_directories(include)
 include_directories(src)
 
-ADD_EXECUTABLE(all ${SRCS} ${HDRS})
-TARGET_LINK_LIBRARIES(all)
+ADD_EXECUTABLE(dummy ${SRCS} ${HDRS})
+TARGET_LINK_LIBRARIES(dummy)

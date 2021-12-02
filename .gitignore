@@ -29,6 +29,7 @@ dist
 
 cmake-build*
 .idea/
+scenes/
 
 # Debugging history files
 \.gdb_history
