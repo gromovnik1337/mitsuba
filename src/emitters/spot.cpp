@@ -16,6 +16,7 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <mitsuba/core/random.h>
 #include <mitsuba/render/scene.h>
 #include <mitsuba/hw/basicshader.h>
 
@@ -63,15 +64,13 @@ MTS_NAMESPACE_BEGIN
  * the maximum value. A projection texture may optionally be supplied.
  */
 
+ref<Random> g_random;
+
 class SpotEmitter : public Emitter {
 public:
     SpotEmitter(const Properties &props) : Emitter(props) {
         m_intensity = props.getSpectrum("intensity", Spectrum(1.0f));
         m_cutoffAngle = props.getFloat("cutoffAngle", 20);
-        m_offX = props.getFloat("offX", 0.5f);
-        m_offY = props.getFloat("offY", 0.0f);
-        m_scaleX = props.getFloat("scaleX", 0.5f);
-        m_scaleY = props.getFloat("scaleY", 0.5f);
         m_beamWidth = props.getFloat("beamWidth", m_cutoffAngle * 3.0f/4.0f);
         m_beamWidth = degToRad(m_beamWidth);
         m_cutoffAngle = degToRad(m_cutoffAngle);
@@ -80,19 +79,35 @@ public:
         m_texture = new ConstantSpectrumTexture(
             props.getSpectrum("texture", Spectrum::getD65()));
 
-        /* World-space aperture radius and focus distance */
-        m_apertureRadius = props.getFloat("apertureRadius");
-        m_focusDistance = props.getFloat("focusDistance");
+        m_scaleX = props.getFloat("scaleX", 1.0f);
+        m_scaleY = props.getFloat("scaleY", 1.0f);
+        m_offX = props.getFloat("offX", 0.5f);
+        m_offY = props.getFloat("offY", 0.5f);
+        m_width = props.getInteger("width", 1);
+        m_height = props.getInteger("height", 1);
+        m_apertureRadius = props.getFloat("apertureRadius", 0.0f);
+        m_focusDistance = props.getFloat("focusDistance", 1.0f);
+        m_gapSize = props.getFloat("gapSize", 0.0f);
+
+        /* Diffraction limit on resolution */
+        m_diffLimit = props.getFloat("diffLimit", 0.0f);
+        m_random = new Random();  // Requires extra (third) sample
+
+        if (m_diffLimit < 0)
+            Log(EError, "Diffraction limit on resolution (in degrees) "
+                        "cannot be negative!");
 
         if (m_apertureRadius == 0) {
-            Log(EWarn, "Can't have a zero aperture radius -- "
-                "setting to %f", Epsilon);
-            m_apertureRadius = Epsilon;
+            Log(EWarn, "Can't have a zero aperture radius -- setting to %f", Epsilon / 10);
+            m_apertureRadius = Epsilon / 10;
         }
         if (m_focusDistance == 0) {
-            Log(EWarn, "Can't have a zero focus distance -- "
-                "setting to %f", Epsilon);
-            m_focusDistance = Epsilon;
+            Log(EWarn, "Can't have a zero focus distance -- setting to %f", 1.0f);
+            m_focusDistance = 1.0f;
+        }
+        if (m_gapSize < 0) {
+            Log(EWarn, "Gap size cannot be negative -- setting to %f", 0.0f);
+            m_gapSize = 0.0f;
         }
     }
 
@@ -102,12 +117,16 @@ public:
         m_intensity = Spectrum(stream);
         m_beamWidth = stream->readFloat();
         m_cutoffAngle = stream->readFloat();
-        m_offX = stream->readFloat();
-        m_offY = stream->readFloat();
         m_scaleX = stream->readFloat();
         m_scaleY = stream->readFloat();
+        m_offX = stream->readFloat();
+        m_offY = stream->readFloat();
+        m_width = stream->readInt();
+        m_height = stream->readInt();
         m_apertureRadius = stream->readFloat();
         m_focusDistance = stream->readFloat();
+        m_diffLimit = stream->readFloat();
+        m_gapSize = stream->readFloat();
         configure();
     }
 
@@ -117,7 +136,10 @@ public:
         m_uvFactor = std::tan(m_cutoffAngle);
         m_invTransitionWidth = 1.0f / (m_cutoffAngle - m_beamWidth);
 
-        m_aperturePdf = 1 / (M_PI * m_apertureRadius * m_apertureRadius);
+        /* Use global copy of m_random to bypass const modifier of falloffCurve() function */
+        g_random = new Random(m_random);
+
+//        m_aperturePdf = 1 / (M_PI * m_apertureRadius * m_apertureRadius);
     }
 
     void serialize(Stream *stream, InstanceManager *manager) const {
@@ -127,35 +149,16 @@ public:
         m_intensity.serialize(stream);
         stream->writeFloat(m_beamWidth);
         stream->writeFloat(m_cutoffAngle);
-        stream->writeFloat(m_offX);
-        stream->writeFloat(m_offY);
         stream->writeFloat(m_scaleX);
         stream->writeFloat(m_scaleY);
+        stream->writeFloat(m_offX);
+        stream->writeFloat(m_offY);
+        stream->writeInt(m_width);
+        stream->writeInt(m_height);
         stream->writeFloat(m_apertureRadius);
         stream->writeFloat(m_focusDistance);
-    }
-
-    inline Spectrum falloffCurve(const Vector &d) const {
-        const Float cosTheta = Frame::cosTheta(d);
-
-        //if (cosTheta <= m_cosCutoffAngle)
-        //    return Spectrum(0.0f);
-
-        Spectrum result(1.0f);
-        if (m_texture->getClass() != MTS_CLASS(ConstantSpectrumTexture)) {
-            Intersection its;
-            its.hasUVPartials = false;
-            its.uv = Point2(m_offX + m_scaleX * d.x / (d.z * m_uvFactor),
-                            m_offY - m_scaleY * d.y / (d.z * m_uvFactor));
-            //std::cout << m_uvFactor << " , " << its.uv.x << " , " << its.uv.y << std::endl;
-            result = m_texture->eval(its);
-        }
-
-        //if (cosTheta >= m_cosBeamWidth)
-        //    return result;
-
-        return result;// * ((m_cutoffAngle - std::acos(cosTheta))
-                //* m_invTransitionWidth);
+        stream->writeFloat(m_diffLimit);
+        stream->writeFloat(m_gapSize);
     }
 
     Spectrum samplePosition(PositionSamplingRecord &pRec, const Point2 &sample,
@@ -215,27 +218,111 @@ public:
         return m_intensity * falloffCurve(local) / dirPdf;
     }
 
+//    Spectrum sampleDirect(DirectSamplingRecord &dRec, const Point2 &sample) const {
+//        const Transform &trafo = m_worldTransform->eval(dRec.time);
+//        Point2 tmp = warp::squareToUniformDiskConcentric(sample) * m_apertureRadius;
+//        Point apertureP(tmp.x, tmp.y, 0.0f);
+//
+//
+//        Point refP = trafo.inverse().transformAffine(dRec.ref);
+//        Vector raydir = Point(0.0f) - refP;
+//        Point focusP = Point(0.0f) - raydir * (m_focusDistance / raydir.z);
+//
+//        dRec.p = trafo.transformAffine(apertureP);
+//        dRec.pdf = 1.0f;
+//        dRec.measure = EDiscrete;
+//        dRec.uv = Point2(0.5f);
+//        dRec.d = trafo.transformAffine(focusP) - trafo.transformAffine(apertureP);
+//        dRec.dist = dRec.d.length();
+//        Float invDist = 1.0f / dRec.dist;
+//        dRec.d *= invDist;
+//        dRec.n = Normal(0.0f);
+//
+//        return m_intensity * falloffCurve(trafo.inverse()(-dRec.d)) * (invDist * invDist);
+//    }
+
+//    inline Spectrum falloffCurve(const Vector &d) const {
+//        const Float cosTheta = Frame::cosTheta(d);
+//
+//        //if (cosTheta <= m_cosCutoffAngle)
+//        //    return Spectrum(0.0f);
+//
+//        Spectrum result(1.0f);
+//        if (m_texture->getClass() != MTS_CLASS(ConstantSpectrumTexture)) {
+//            Intersection its;
+//            its.hasUVPartials = false;
+//            its.uv = Point2(m_offX + m_scaleX * d.x / (d.z * m_uvFactor),
+//                            m_offY - m_scaleY * d.y / (d.z * m_uvFactor));
+//            //std::cout << m_uvFactor << " , " << its.uv.x << " , " << its.uv.y << std::endl;
+//            result = m_texture->eval(its);
+//        }
+//
+//        //if (cosTheta >= m_cosBeamWidth)
+//        //    return result;
+//
+//        return result;// * ((m_cutoffAngle - std::acos(cosTheta))
+//                //* m_invTransitionWidth);
+//    }
+
     Spectrum sampleDirect(DirectSamplingRecord &dRec, const Point2 &sample) const {
+//        Log(EWarn, "Here");
         const Transform &trafo = m_worldTransform->eval(dRec.time);
+
         Point2 tmp = warp::squareToUniformDiskConcentric(sample) * m_apertureRadius;
         Point apertureP(tmp.x, tmp.y, 0.0f);
-
-
-        Point refP = trafo.inverse().transformAffine(dRec.ref);
-        Vector raydir = Point(0.0f) - refP;
-        Point focusP = Point(0.0f) - raydir * (m_focusDistance / raydir.z);
-
         dRec.p = trafo.transformAffine(apertureP);
+//        dRec.p = trafo.transformAffine(Point(0.0f));
         dRec.pdf = 1.0f;
         dRec.measure = EDiscrete;
         dRec.uv = Point2(0.5f);
-        dRec.d = trafo.transformAffine(focusP) - trafo.transformAffine(apertureP);
+        dRec.d = dRec.p - dRec.ref;
         dRec.dist = dRec.d.length();
         Float invDist = 1.0f / dRec.dist;
         dRec.d *= invDist;
         dRec.n = Normal(0.0f);
+        dRec.pdf = 1;
+        dRec.measure = EDiscrete;
 
-        return m_intensity * falloffCurve(trafo.inverse()(-dRec.d)) * (invDist * invDist);
+        Point refP = trafo.inverse().transformAffine(dRec.ref);
+        Vector raydir = refP - apertureP;
+        Vector focusP = Vector(apertureP) + raydir * (m_focusDistance / raydir.z);
+
+        return m_intensity * falloffCurve(focusP) * (invDist * invDist);
+//        return m_intensity * falloffCurve(trafo.inverse()(-dRec.d)) * (invDist * invDist);
+    }
+
+    inline Spectrum falloffCurve(const Vector &d) const {
+        Spectrum result(1.0f);
+
+        if (m_texture->getClass() != MTS_CLASS(ConstantSpectrumTexture)) {
+            Intersection its;
+            its.hasUVPartials = false;
+
+            /* Project the point/direction onto image/mirror plane to get pixel coordinates for sampling */
+            Point2 pix(m_scaleX * d.x / d.z + m_offX, m_scaleY * d.y / d.z + m_offY);
+
+            /* Simulate diffraction limit on resolution */
+            Point2 diffSample(g_random->nextFloat(), g_random->nextFloat());
+            /* Do uniform sampling of Airy disk for simplicity. The diffraction limit effect is typically
+             * on a scale of couple pixels so the difference is distributions (uniform vs actual diffraction profile)
+             * will be indistiguishable (but the effect will become stronger so consider reducing the value of diffLimit) */
+            Point2 diff = warp::squareToUniformDiskConcentric(diffSample);
+            /* Convert diffraction limit from radians to pixels and add to the pixel sample */
+            pix.x += diff.x * tan(degToRad(m_diffLimit)) * m_scaleX;
+            pix.y += diff.y * tan(degToRad(m_diffLimit)) * m_scaleY;
+
+            /* Evaluate texture only if the sample did not land in the gap between neighbour mirrors/pixels */
+            Point2 frac(pix.x - floor(pix.x), pix.y - floor(pix.y));
+            if (frac.x < m_gapSize / 2 || frac.x > 1.0f - m_gapSize / 2 ||
+                frac.y < m_gapSize / 2 || frac.y > 1.0f - m_gapSize / 2)
+                    return Spectrum(0.0f);
+
+            its.uv = Point2(pix.x / m_width, pix.y / m_height);
+//            its.uv = Point2(0.5f + 0.5f * d.x / (d.z * m_uvFactor),
+//                            0.5f + 0.5f * d.y / (d.z * m_uvFactor));
+            result = m_texture->eval(its);
+        }
+        return result;
     }
 
     Float pdfDirect(const DirectSamplingRecord &dRec) const {
@@ -264,8 +351,16 @@ public:
             << "  texture = " << m_texture.toString() << "," << std::endl
             << "  beamWidth = " << (m_beamWidth * 180/M_PI) << "," << std::endl
             << "  cutoffAngle = " << (m_cutoffAngle * 180/M_PI) << std::endl
+            << "  scaleX = " << m_scaleX << "," << endl
+            << "  scaleY = " << m_scaleY << "," << endl
+            << "  offX = " << m_offX << "," << endl
+            << "  offY = " << m_offY << "," << endl
+            << "  width = " << m_width << "," << endl
+            << "  height = " << m_height << "," << endl
             << "  apertureRadius = " << m_apertureRadius << "," << endl
             << "  focusDistance = " << m_focusDistance << "," << endl
+            << "  diffLimit = " << m_diffLimit << "," << endl
+            << "  gapSize = " << m_gapSize << "," << endl
             << "]";
         return oss.str();
     }
@@ -276,11 +371,15 @@ public:
 private:
     Spectrum m_intensity;
     ref<Texture> m_texture;
-    Float m_beamWidth, m_cutoffAngle, m_offX, m_offY, m_scaleX, m_scaleY, m_uvFactor;
+    ref<Random> m_random;
+    Float m_beamWidth, m_cutoffAngle, m_uvFactor;
     Float m_cosBeamWidth, m_cosCutoffAngle, m_invTransitionWidth;
+    Float m_scaleX, m_scaleY, m_offX, m_offY;
+    Float m_width, m_height;
     Float m_apertureRadius;
     Float m_focusDistance;
-    Float m_aperturePdf;
+    Float m_diffLimit;
+    Float m_gapSize;
 };
 
 // ================ Hardware shader implementation ================

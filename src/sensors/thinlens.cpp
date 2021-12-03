@@ -137,8 +137,8 @@ public:
 
         if (m_apertureRadius == 0) {
             Log(EWarn, "Can't have a zero aperture radius -- "
-                "setting to %f", Epsilon);
-            m_apertureRadius = Epsilon;
+                "setting to %f", Epsilon / 10);
+            m_apertureRadius = Epsilon / 10;
         }
 
         /* Diffraction limit on resolution */
@@ -352,6 +352,9 @@ public:
         Point2 diffSample(g_random->nextFloat(), g_random->nextFloat());
         /* Convert diffraction limit from radians to pixels */
         Float diffPixels_y = 0.5f * m_resolution.y * tan(degToRad(m_diffLimit)) / tan(degToRad(getYFov()) / 2);
+        /* Do uniform sampling of Airy disk for simplicity. The diffraction limit effect is typically
+         * on a scale of couple pixels so the difference is distributions (uniform vs actual diffraction profile)
+         * will be indistiguishable (but the effect will become stronger so consider reducing the value of diffLimit) */
         Point2 diff = warp::squareToUniformDiskConcentric(diffSample) * diffPixels_y;
         diff.x /= m_pixelAspect;  // Account for non-square pixels (diffraction is constant in angle terms)
 //         Log(EWarn, "Diff (%f, %f)", diff.x, diff.y);
