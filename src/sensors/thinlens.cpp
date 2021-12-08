@@ -172,7 +172,8 @@ public:
     void configure() {
         PerspectiveCamera::configure();
 
-        /* Use global copy of m_random to bypass const modifier of sampleRayDifferential() function */
+        /* Use global copy of m_random to bypass const modifier of sampleRayDifferential() function.
+        * Such ad-hoc solution is potentially not thread safe when using multiple cameras in one scene. */
         g_random = new Random(m_random);
 
         const Vector2i &filmSize   = m_film->getSize();
@@ -346,8 +347,6 @@ public:
             * m_apertureRadius;
         ray.time = sampleTime(timeSample);
 
-//        Log(EWarn, "Here");
-
         /* Simulate diffraction limit on resolution */
         Point2 diffSample(g_random->nextFloat(), g_random->nextFloat());
         /* Convert diffraction limit from radians to pixels */
@@ -357,7 +356,6 @@ public:
          * will be indistiguishable (but the effect will become stronger so consider reducing the value of diffLimit) */
         Point2 diff = warp::squareToUniformDiskConcentric(diffSample) * diffPixels_y;
         diff.x /= m_pixelAspect;  // Account for non-square pixels (diffraction is constant in angle terms)
-//         Log(EWarn, "Diff (%f, %f)", diff.x, diff.y);
 
         /* Compute the corresponding position on the
            near plane (in local camera space) */

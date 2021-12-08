@@ -87,7 +87,7 @@ public:
         m_height = props.getInteger("height", 1);
         m_apertureRadius = props.getFloat("apertureRadius", 0.0f);
         m_focusDistance = props.getFloat("focusDistance", 1.0f);
-        m_gapSize = props.getFloat("gapSize", 0.0f);
+        m_pixelGap = props.getFloat("pixelGap", 0.0f);
 
         /* Diffraction limit on resolution */
         m_diffLimit = props.getFloat("diffLimit", 0.0f);
@@ -105,9 +105,9 @@ public:
             Log(EWarn, "Can't have a zero focus distance -- setting to %f", 1.0f);
             m_focusDistance = 1.0f;
         }
-        if (m_gapSize < 0) {
-            Log(EWarn, "Gap size cannot be negative -- setting to %f", 0.0f);
-            m_gapSize = 0.0f;
+        if (m_pixelGap < 0) {
+            Log(EWarn, "Pixel gap cannot be negative -- setting to %f", 0.0f);
+            m_pixelGap = 0.0f;
         }
     }
 
@@ -126,7 +126,7 @@ public:
         m_apertureRadius = stream->readFloat();
         m_focusDistance = stream->readFloat();
         m_diffLimit = stream->readFloat();
-        m_gapSize = stream->readFloat();
+        m_pixelGap = stream->readFloat();
         configure();
     }
 
@@ -136,10 +136,10 @@ public:
         m_uvFactor = std::tan(m_cutoffAngle);
         m_invTransitionWidth = 1.0f / (m_cutoffAngle - m_beamWidth);
 
-        /* Use global copy of m_random to bypass const modifier of falloffCurve() function */
+        /* Use global copy of m_random to bypass const modifier of falloffCurve() function.
+         * Such ad-hoc solution is potentially not thread safe
+         * when using multiple projector light sources in one scene. */
         g_random = new Random(m_random);
-
-//        m_aperturePdf = 1 / (M_PI * m_apertureRadius * m_apertureRadius);
     }
 
     void serialize(Stream *stream, InstanceManager *manager) const {
@@ -158,7 +158,7 @@ public:
         stream->writeFloat(m_apertureRadius);
         stream->writeFloat(m_focusDistance);
         stream->writeFloat(m_diffLimit);
-        stream->writeFloat(m_gapSize);
+        stream->writeFloat(m_pixelGap);
     }
 
     Spectrum samplePosition(PositionSamplingRecord &pRec, const Point2 &sample,
@@ -218,60 +218,12 @@ public:
         return m_intensity * falloffCurve(local) / dirPdf;
     }
 
-//    Spectrum sampleDirect(DirectSamplingRecord &dRec, const Point2 &sample) const {
-//        const Transform &trafo = m_worldTransform->eval(dRec.time);
-//        Point2 tmp = warp::squareToUniformDiskConcentric(sample) * m_apertureRadius;
-//        Point apertureP(tmp.x, tmp.y, 0.0f);
-//
-//
-//        Point refP = trafo.inverse().transformAffine(dRec.ref);
-//        Vector raydir = Point(0.0f) - refP;
-//        Point focusP = Point(0.0f) - raydir * (m_focusDistance / raydir.z);
-//
-//        dRec.p = trafo.transformAffine(apertureP);
-//        dRec.pdf = 1.0f;
-//        dRec.measure = EDiscrete;
-//        dRec.uv = Point2(0.5f);
-//        dRec.d = trafo.transformAffine(focusP) - trafo.transformAffine(apertureP);
-//        dRec.dist = dRec.d.length();
-//        Float invDist = 1.0f / dRec.dist;
-//        dRec.d *= invDist;
-//        dRec.n = Normal(0.0f);
-//
-//        return m_intensity * falloffCurve(trafo.inverse()(-dRec.d)) * (invDist * invDist);
-//    }
-
-//    inline Spectrum falloffCurve(const Vector &d) const {
-//        const Float cosTheta = Frame::cosTheta(d);
-//
-//        //if (cosTheta <= m_cosCutoffAngle)
-//        //    return Spectrum(0.0f);
-//
-//        Spectrum result(1.0f);
-//        if (m_texture->getClass() != MTS_CLASS(ConstantSpectrumTexture)) {
-//            Intersection its;
-//            its.hasUVPartials = false;
-//            its.uv = Point2(m_offX + m_scaleX * d.x / (d.z * m_uvFactor),
-//                            m_offY - m_scaleY * d.y / (d.z * m_uvFactor));
-//            //std::cout << m_uvFactor << " , " << its.uv.x << " , " << its.uv.y << std::endl;
-//            result = m_texture->eval(its);
-//        }
-//
-//        //if (cosTheta >= m_cosBeamWidth)
-//        //    return result;
-//
-//        return result;// * ((m_cutoffAngle - std::acos(cosTheta))
-//                //* m_invTransitionWidth);
-//    }
-
     Spectrum sampleDirect(DirectSamplingRecord &dRec, const Point2 &sample) const {
-//        Log(EWarn, "Here");
         const Transform &trafo = m_worldTransform->eval(dRec.time);
 
         Point2 tmp = warp::squareToUniformDiskConcentric(sample) * m_apertureRadius;
         Point apertureP(tmp.x, tmp.y, 0.0f);
         dRec.p = trafo.transformAffine(apertureP);
-//        dRec.p = trafo.transformAffine(Point(0.0f));
         dRec.pdf = 1.0f;
         dRec.measure = EDiscrete;
         dRec.uv = Point2(0.5f);
@@ -288,7 +240,6 @@ public:
         Vector focusP = Vector(apertureP) + raydir * (m_focusDistance / raydir.z);
 
         return m_intensity * falloffCurve(focusP) * (invDist * invDist);
-//        return m_intensity * falloffCurve(trafo.inverse()(-dRec.d)) * (invDist * invDist);
     }
 
     inline Spectrum falloffCurve(const Vector &d) const {
@@ -313,13 +264,11 @@ public:
 
             /* Evaluate texture only if the sample did not land in the gap between neighbour mirrors/pixels */
             Point2 frac(pix.x - floor(pix.x), pix.y - floor(pix.y));
-            if (frac.x < m_gapSize / 2 || frac.x > 1.0f - m_gapSize / 2 ||
-                frac.y < m_gapSize / 2 || frac.y > 1.0f - m_gapSize / 2)
+            if (frac.x < m_pixelGap / 2 || frac.x > 1.0f - m_pixelGap / 2 ||
+                frac.y < m_pixelGap / 2 || frac.y > 1.0f - m_pixelGap / 2)
                     return Spectrum(0.0f);
 
             its.uv = Point2(pix.x / m_width, pix.y / m_height);
-//            its.uv = Point2(0.5f + 0.5f * d.x / (d.z * m_uvFactor),
-//                            0.5f + 0.5f * d.y / (d.z * m_uvFactor));
             result = m_texture->eval(its);
         }
         return result;
@@ -350,17 +299,17 @@ public:
             << "  intensity = " << m_intensity.toString() << "," << std::endl
             << "  texture = " << m_texture.toString() << "," << std::endl
             << "  beamWidth = " << (m_beamWidth * 180/M_PI) << "," << std::endl
-            << "  cutoffAngle = " << (m_cutoffAngle * 180/M_PI) << std::endl
-            << "  scaleX = " << m_scaleX << "," << endl
-            << "  scaleY = " << m_scaleY << "," << endl
-            << "  offX = " << m_offX << "," << endl
-            << "  offY = " << m_offY << "," << endl
-            << "  width = " << m_width << "," << endl
-            << "  height = " << m_height << "," << endl
-            << "  apertureRadius = " << m_apertureRadius << "," << endl
-            << "  focusDistance = " << m_focusDistance << "," << endl
-            << "  diffLimit = " << m_diffLimit << "," << endl
-            << "  gapSize = " << m_gapSize << "," << endl
+                << "  cutoffAngle = " << (m_cutoffAngle * 180/M_PI) << std::endl
+                << "  scaleX = " << m_scaleX << "," << endl
+                << "  scaleY = " << m_scaleY << "," << endl
+                << "  offX = " << m_offX << "," << endl
+                << "  offY = " << m_offY << "," << endl
+                << "  width = " << m_width << "," << endl
+                << "  height = " << m_height << "," << endl
+                << "  apertureRadius = " << m_apertureRadius << "," << endl
+                << "  focusDistance = " << m_focusDistance << "," << endl
+                << "  diffLimit = " << m_diffLimit << "," << endl
+                << "  pixelGap = " << m_pixelGap << "," << endl
             << "]";
         return oss.str();
     }
@@ -379,7 +328,7 @@ private:
     Float m_apertureRadius;
     Float m_focusDistance;
     Float m_diffLimit;
-    Float m_gapSize;
+    Float m_pixelGap;
 };
 
 // ================ Hardware shader implementation ================
