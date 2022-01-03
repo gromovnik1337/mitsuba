@@ -87,6 +87,7 @@ public:
         m_height = props.getInteger("height", 1);
         m_apertureRadius = props.getFloat("apertureRadius", 0.0f);
         m_focusDistance = props.getFloat("focusDistance", 1.0f);
+        m_extraDOF = props.getFloat("extraDOF", 0.0f);
         m_pixelGap = props.getFloat("pixelGap", 0.0f);
 
         /* Diffraction limit on resolution */
@@ -104,6 +105,10 @@ public:
         if (m_focusDistance == 0) {
             Log(EWarn, "Can't have a zero focus distance -- setting to %f", 1.0f);
             m_focusDistance = 1.0f;
+        }
+        if (m_extraDOF < 0) {
+            Log(EWarn, "Can't have negative extra DOF -- setting to %f", 0.0f);
+            m_extraDOF = 0.0f;
         }
         if (m_pixelGap < 0) {
             Log(EWarn, "Pixel gap cannot be negative -- setting to %f", 0.0f);
@@ -125,6 +130,7 @@ public:
         m_height = stream->readInt();
         m_apertureRadius = stream->readFloat();
         m_focusDistance = stream->readFloat();
+        m_extraDOF = stream->readFloat();
         m_diffLimit = stream->readFloat();
         m_pixelGap = stream->readFloat();
         configure();
@@ -157,6 +163,7 @@ public:
         stream->writeInt(m_height);
         stream->writeFloat(m_apertureRadius);
         stream->writeFloat(m_focusDistance);
+        stream->writeFloat(m_extraDOF);
         stream->writeFloat(m_diffLimit);
         stream->writeFloat(m_pixelGap);
     }
@@ -222,7 +229,18 @@ public:
         const Transform &trafo = m_worldTransform->eval(dRec.time);
 
         Point2 tmp = warp::squareToUniformDiskConcentric(sample) * m_apertureRadius;
+        Point refP = trafo.inverse().transformAffine(dRec.ref);
         Point apertureP(tmp.x, tmp.y, 0.0f);
+
+        /* ExtraDOF in the projector model improves Depth of Field observed with RGB projector
+         * when using Monochrome camera (due to the chromatic aberrations that split focal plane into three) */
+        if (m_extraDOF > Epsilon / 10) {
+            float depth = fabs(fabs(refP.z) - m_focusDistance);
+            /* Achieve the desired effect by modulating projector aperture radius using sigmoid function */
+            float dof_factor = 1.0f / (1.0f + exp(-(depth - m_extraDOF) / m_extraDOF));
+            apertureP = apertureP * dof_factor;
+        }
+
         dRec.p = trafo.transformAffine(apertureP);
         dRec.pdf = 1.0f;
         dRec.measure = EDiscrete;
@@ -235,7 +253,6 @@ public:
         dRec.pdf = 1;
         dRec.measure = EDiscrete;
 
-        Point refP = trafo.inverse().transformAffine(dRec.ref);
         Vector raydir = refP - apertureP;
         Vector focusP = Vector(apertureP) + raydir * (m_focusDistance / raydir.z);
 
@@ -308,6 +325,7 @@ public:
                 << "  height = " << m_height << "," << endl
                 << "  apertureRadius = " << m_apertureRadius << "," << endl
                 << "  focusDistance = " << m_focusDistance << "," << endl
+                << "  extraDOF = " << m_extraDOF << "," << endl
                 << "  diffLimit = " << m_diffLimit << "," << endl
                 << "  pixelGap = " << m_pixelGap << "," << endl
             << "]";
@@ -327,6 +345,7 @@ private:
     Float m_width, m_height;
     Float m_apertureRadius;
     Float m_focusDistance;
+    Float m_extraDOF;
     Float m_diffLimit;
     Float m_pixelGap;
 };
