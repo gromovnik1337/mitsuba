@@ -106,7 +106,7 @@ hasCollada=True
 hasPython = []
 
 env.Append(CPPPATH=env['BASEINCLUDE'])
-env.Append(CPPFLAGS=[])
+env.Append(CPPFLAGS=['-std=gnu++11'])
 env.Append(LIBPATH=[])
 env.Append(LIBS=env['BASELIB'])
 if 'BOOSTINCLUDE' in env:
